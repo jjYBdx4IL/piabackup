@@ -44,8 +44,6 @@ class DisclaimerWindow(tk.Toplevel):
         ttk.Button(btn_frame, text="Refuse", command=self.on_refuse).pack(side=tk.RIGHT)
         
         common.center_window(self, 550, 450)
-        self.grab_set()
-        self.focus_force()
 
     def accept(self):
         cfg = Config()

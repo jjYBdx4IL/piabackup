@@ -7,13 +7,15 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from tkinter import Tk
 
 from windows_toasts import WindowsToaster
 
 APPNAME = "piabackup"
-APP_VERSION = "0.8.0.0"
+APP_VERSION = "0.8.1.0"
 APP_UPDATE_CHECK_URL = "https://api.github.com/repos/jjYBdx4IL/piabackup/releases/latest"
 
 LAPPDATA_PATH = Path(os.environ.get('LOCALAPPDATA', os.path.join(os.path.expanduser('~'), 'AppData', 'Local')))
@@ -60,6 +62,9 @@ def center_window(win, width, height):
     screen_height = win.winfo_screenheight()
     x = (screen_width - width) // 2
     y = (screen_height - height) // 3
+    win.lift()
+    win.grab_set()
+    win.focus_force()
     win.geometry(f'{width}x{height}+{x}+{y}')
 
 def setup_logging():
@@ -111,4 +116,40 @@ def quote_command(cmd_list:list[str]):
     else:
         # POSIX (Linux/macOS) shell style quoting
         return shlex.join(cmd_list)
-    
+
+def format_restic_path(path: Path):
+    # Transform C:\Users\work to /C/Users/work
+    drive = path.drive
+    if drive:
+        return "/" + drive.replace(":", "") + path.as_posix().replace(drive, "")
+    return path.as_posix()
+
+@contextmanager
+def handle_iexclude_file(iexclude: str, backup_path: Path, is_rewrite: bool = False):
+    if not iexclude:
+        yield None
+        return
+
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8', suffix=".txt") as tmp:
+        absolute_exclusions = []
+        if sys.platform == "win32" and is_rewrite:
+            for line in iexclude.splitlines():
+                line = line.strip()
+                if line:
+                    absolute_exclusions.append(format_restic_path(backup_path.joinpath(line.lstrip('/\\'))))
+        else:
+            for line in iexclude.splitlines():
+                line = line.strip()
+                if line:
+                    absolute_exclusions.append(backup_path.joinpath(line.lstrip('/\\')).as_posix())
+
+        if IS_DEBUGGER_PRESENT:
+            logging.debug("iexclude file=" + "\n".join(absolute_exclusions))
+        
+        tmp.write("\n".join(absolute_exclusions))
+        tmp_path = tmp.name
+
+    try:
+        yield tmp_path
+    finally:
+        os.remove(tmp_path)

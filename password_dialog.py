@@ -32,6 +32,8 @@ class PasswordDialog(tk.Toplevel):
         ttk.Button(btn_frame, text="Save", command=self.save).pack(side=tk.RIGHT, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
 
+        common.center_window(self, 400, 220)
+
     def save(self):
         password = self.var_password.get()
         if password:

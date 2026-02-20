@@ -1,3 +1,9 @@
+# PiaBackup
+
+## Why the name?
+
+Because 'paranoia backup' was a bit too long.
+
 ## INSTALLATION
 
 * MSIX: open properties dialog for MSIX file -> Signatures -> Details -> View -> Install -> Local Machine -> Trusted CA
@@ -37,8 +43,6 @@ doesn't care about tags when pruning unless you explicitly tell it so.
 
 ## To-Do
 
-* Rewrite support.
-* error check frequency not adhered to
 * UI support to fix detected bit rot.
   * Manually skip snapshot for bit rot detection?
   * Bit rot specific file exclusions?
@@ -53,3 +57,7 @@ doesn't care about tags when pruning unless you explicitly tell it so.
 ## Commands
 
 * `sqlite3 sqlite.db ".schema" ; sqlite3 -line sqlite.db "select * from config; select * from status" ; sqlite3 -line sqlite.db "select * from backup_dirs limit 2; select * from update_checker;"`
+
+
+--
+git@nas:py.git@a1bd95b06a2fe46713bbaa77194172e37e2bbe18

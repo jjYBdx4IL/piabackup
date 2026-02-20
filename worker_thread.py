@@ -49,6 +49,50 @@ class WorkerTask:
     def run(self):
         raise NotImplementedError()
 
+
+class StreamingResticTask(WorkerTask):
+    def __init__(self, env, no_lock, *args, iexclude=None, backup_path=None, **kwargs):
+        super().__init__(**kwargs)
+        self.env = env
+        self.no_lock = no_lock
+        self.command = list(args)
+        self.iexclude = iexclude
+        self.backup_path = backup_path
+
+    def on_output(self, line):
+        pass
+
+    def run(self):
+        cmd = ["restic"] + self.command
+        if self.no_lock:
+            cmd.append("--no-lock")
+
+        with common.handle_iexclude_file(self.iexclude, self.backup_path, self.command[0] == 'rewrite') as iexclude_path:
+            if iexclude_path:
+                cmd.extend(["--iexclude-file", iexclude_path])
+                #shutil.copyfile(iexclude_path, "dump.txt")
+
+            logging.info(f"running: {common.quote_command(cmd)}")
+            
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            p = subprocess.Popen(cmd, text=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=self.env, startupinfo=startupinfo, bufsize=1, universal_newlines=True)
+            
+            for line in p.stdout:
+                logging.info(line.strip())
+                self.on_output(line)
+            
+            stderr_output = ""
+            for line in p.stderr:
+                stderr_output += line
+                logging.error(line.strip())
+                self.on_output(line)
+
+            rc = p.wait()
+            if rc != 0:
+                raise Exception(f"Command failed with exit code {rc}:\n{stderr_output}")
+			
 class ListSnapshotsTask(WorkerTask):
     def __init__(self, env, tag, no_lock, **kwargs):
         super().__init__(**kwargs)

@@ -50,7 +50,8 @@ class BackupDir:
                                      (self.enabled, self.frequency, self.iexclude, self.id))
 
     def schedule_run_now(self):
-        common.db_conn.execute("UPDATE backup_dirs SET next_run=0 WHERE id=?", (self.id,))
+        self.fastscan_fingerprint = "1"
+        common.db_conn.execute("UPDATE backup_dirs SET next_run=0, fastscan_fingerprint='1' WHERE id=?", (self.id,))
 
     @staticmethod
     def fetch_overdue_backup_row():

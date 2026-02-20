@@ -82,8 +82,6 @@ class BrowseDialog(tk.Toplevel):
         self.current_snap_id = None
         
         self.load_snapshots()
-        self.lift()
-        self.focus_force()
 
     def load_snapshots(self):
         self.lbl_status.config(text="Loading snapshots...")

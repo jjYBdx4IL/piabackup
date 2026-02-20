@@ -27,6 +27,7 @@ from piabackup.exclusion_editor import ExclusionEditor
 from piabackup.frequency import format_frequency, parse_frequency
 from piabackup.help_window import HelpWindow
 from piabackup.password_dialog import PasswordDialog
+from piabackup.rewrite_window import RewriteWindow
 from piabackup.restic import Restic
 from piabackup.update_checker import UpdateChecker
 from piabackup.worker_thread import GetAllPathsTask, UnlockTask, WorkerThread
@@ -226,6 +227,8 @@ class SettingsWindow(tk.Toplevel):
         self.btn_edit.pack(side=tk.LEFT, padx=5)
         self.btn_remove = ttk.Button(btn_list_frame, text="Remove", command=self.remove_dir)
         self.btn_remove.pack(side=tk.LEFT)
+        self.btn_rewrite = ttk.Button(btn_list_frame, text="Rewrite", command=self.rewrite_dir)
+        self.btn_rewrite.pack(side=tk.LEFT, padx=5)
         
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
         self.on_tree_select(None)
@@ -246,9 +249,9 @@ class SettingsWindow(tk.Toplevel):
         target_width = min(req_width + 50, screen_width - 50)
         target_height = min(req_height + 40, screen_height - 100)
         
-        common.center_window(self, target_width, target_height)
         self.update_bitrot_state()
-        self.focus_force()
+        
+        common.center_window(self, target_width, target_height)
 
     def check_updates_now(self):
         UpdateChecker.check_now_interactive(self)
@@ -319,10 +322,16 @@ class SettingsWindow(tk.Toplevel):
             self.btn_run.state(['disabled'])
             self.btn_edit.state(['disabled'])
             self.btn_remove.state(['disabled'])
+            self.btn_rewrite.state(['disabled'])
             return
         
         self.btn_edit.state(['!disabled'])
         self.btn_remove.state(['!disabled'])
+        
+        if len(selected) == 1:
+            self.btn_rewrite.state(['!disabled'])
+        else:
+            self.btn_rewrite.state(['disabled'])
         
         has_unsaved = False
         for item in selected:
@@ -429,7 +438,7 @@ class SettingsWindow(tk.Toplevel):
                     d = self.dirs[index]
                     if d.iexclude:
                         text_to_show = d.iexclude
-            elif column == '#6': # Summary
+            elif column == '#7': # Summary
                 index = int(item)
                 if 0 <= index < len(self.dirs):
                     d = self.dirs[index]
@@ -443,8 +452,8 @@ class SettingsWindow(tk.Toplevel):
                 text = self.tree.item(item, "values")[0]
                 if self.is_text_truncated(text, column):
                     text_to_show = text
-            elif column == '#7': # Error
-                text = self.tree.item(item, "values")[6]
+            elif column == '#8': # Error
+                text = self.tree.item(item, "values")[7]
                 if self.is_text_truncated(text, column):
                     text_to_show = text
             
@@ -727,6 +736,37 @@ class SettingsWindow(tk.Toplevel):
             if self.on_trigger_run:
                 self.on_trigger_run()
             WorkerThread.start_worker_thread()
+
+    def rewrite_dir(self):
+        selected = self.tree.selection()
+        if len(selected) != 1:
+            return
+
+        path_str = self.tree.item(selected[0])['values'][0]
+        entry = next((d for d in self.dirs if str(d.path) == path_str), None)
+        if not entry:
+            return
+
+        repo = self.var_repo.get().strip()
+        env = os.environ.copy()
+
+        if repo:
+            password = keyring.get_password(common.APPNAME, "repository")
+            if not password:
+                if messagebox.askyesno(common.APPNAME, "Repository password is not set. Set it now?"):
+                    dlg = PasswordDialog(self)
+                    self.wait_window(dlg)
+                    password = keyring.get_password(common.APPNAME, "repository")
+
+                if not password:
+                    return
+            env["RESTIC_REPOSITORY"] = repo
+            env["RESTIC_PASSWORD"] = password
+        elif "RESTIC_REPOSITORY" not in env:
+            messagebox.showerror(common.APPNAME, "Repository not configured.")
+            return
+
+        RewriteWindow(self, entry, env, self.var_no_lock.get())
 
     def show_context_menu(self, event):
         item = self.tree.identify_row(event.y)

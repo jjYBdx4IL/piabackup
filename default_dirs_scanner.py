@@ -24,6 +24,12 @@ C:\Jts
 {home}\AndroidStudioProjects
  -/*/build/
  -/*/app/build/
+{home}\DevEcoStudioProjects
+ -/*/.cache/
+ -/*/.hvigor/
+ -/*/entry/.preview/
+ -/*/entry/build/
+ -/*/oh_modules/
 {home}\Documents
 {home}\Saved Games
 {localappdata}\dlcache

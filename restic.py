@@ -199,23 +199,8 @@ class Restic:
             cmd.append("--no-cache")
         cmd.extend(["--tag", backup_path.as_posix()])
         
-        tmpdir_ctx = tempfile.TemporaryDirectory() if iexclude else contextlib.nullcontext()
-
-        with tmpdir_ctx as tmpdir:
-            if iexclude:
-                iexclude_path = os.path.join(tmpdir, "iexcludes.txt")
-                
-                absolute_exclusions = []
-                for line in iexclude.splitlines():
-                    line = line.strip()
-                    if line:
-                        absolute_exclusions.append(backup_path.joinpath(line.lstrip('/\\')).as_posix())
-
-                if common.IS_DEBUGGER_PRESENT:
-                    logging.debug("iexclude file="+"\n".join(absolute_exclusions))
-                with open(iexclude_path, 'w', encoding='utf-8') as f:
-                    f.write("\n".join(absolute_exclusions))
-
+        with common.handle_iexclude_file(iexclude, backup_path) as iexclude_path:
+            if iexclude_path:
                 cmd.extend(["--iexclude-file", iexclude_path])
 
             cmd.append(str(backup_path))
