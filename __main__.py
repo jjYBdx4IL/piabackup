@@ -40,6 +40,7 @@ log_window = None
 disclaimer_window = None
 licenses_window = None
 scheduler_timer = None
+last_error_check_time = 0
 
 def acquire_lock():
     global app_lock_handle, lock_file_handle
@@ -140,7 +141,7 @@ def open_licenses():
     licenses_window = LicensesWindow(root, extra_licenses=extra_licenses)
 
 def check_scheduler():
-    global scheduler_timer
+    global scheduler_timer, last_error_check_time
     if scheduler_timer:
         if root: root.after_cancel(scheduler_timer)
         scheduler_timer = None
@@ -219,13 +220,14 @@ def check_scheduler():
                     if next_check < next_wake_time:
                         next_wake_time = next_check
 
-            # 3. error check
-            if errors:
-                toast = Toast()
-                toast.text_fields = ["Backup Errors Detected", "\n".join(errors)[:200]]
-                common.wintoaster.show_toast(toast)
-
-            next_check = now + cfg.error_check_frequency
+            # 3. error toast
+            if now >= last_error_check_time + cfg.error_check_frequency:
+                last_error_check_time = now
+                if errors:
+                    toast = Toast()
+                    toast.text_fields = ["Backup Errors Detected", "\n".join(errors)[:200]]
+                    common.wintoaster.show_toast(toast)
+            next_check = last_error_check_time + cfg.error_check_frequency
             if next_check < next_wake_time:
                 next_wake_time = next_check
 
