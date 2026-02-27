@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from piabackup import common
+from ui.tools import Tools
 
 
 def translate_pattern_to_regex(pattern):
@@ -137,7 +138,7 @@ class ExclusionEditor(tk.Toplevel):
         self.btn_show_all.pack(side=tk.LEFT)
         text_xsb.grid(row=3, column=0, columnspan=2, sticky="ew")
 
-        common.center_window(self, 800, 700)
+        Tools.center_window(self, 800, 700)
 
     def _populate_tree(self, parent, data):
         for item, children in sorted(data.items()):
@@ -219,6 +220,7 @@ class ExclusionEditor(tk.Toplevel):
         
         # --- Update UI ---
         def format_bytes(size):
+            unit = ""
             for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
                 if size < 1024.0: break
                 size /= 1024.0

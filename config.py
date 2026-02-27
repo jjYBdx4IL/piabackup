@@ -8,7 +8,6 @@ class Config:
     def __init__(self):
         self.repo = ""
         self.full_check_frequency = common.DEFAULT_CHECK_IVAL
-        self.prune_frequency = common.DEFAULT_PRUNE_IVAL
         self.error_check_frequency = common.DEFAULT_ERROR_CHECK_IVAL
         self.bitrot_detection = False
         self.prune_enabled = False
@@ -19,7 +18,8 @@ class Config:
         self.update_check_enabled = True
         self.update_check_frequency = common.DEFAULT_UPDATE_CHECK_IVAL
         self.update_check_toast_interval = common.DEFAULT_UPDATE_TOAST_IVAL
-        self.prescan_file_limit = common.DEFAULT_FILE_SCAN_LIMIT
+        self.prescan_enabled = True
+        self.wait_for_idle = True
         self.load()
 
     def load(self):
@@ -30,7 +30,6 @@ class Config:
                 
                 self.repo = data.get("repo", "")
                 self.full_check_frequency = int(data.get("full_check_frequency", common.DEFAULT_CHECK_IVAL))
-                self.prune_frequency = int(data.get("prune_frequency", common.DEFAULT_PRUNE_IVAL))
                 self.error_check_frequency = int(data.get("error_check_frequency", common.DEFAULT_ERROR_CHECK_IVAL))
                 self.bitrot_detection = bool(int(data.get("bitrot_detection", "1")))
                 self.prune_enabled = bool(int(data.get("prune_enabled", "0")))
@@ -41,7 +40,8 @@ class Config:
                 self.update_check_enabled = bool(int(data.get("update_check_enabled", "1")))
                 self.update_check_frequency = int(data.get("update_check_frequency", common.DEFAULT_UPDATE_CHECK_IVAL))
                 self.update_check_toast_interval = int(data.get("update_check_toast_interval", common.DEFAULT_UPDATE_TOAST_IVAL))
-                self.prescan_file_limit = int(data.get("prescan_file_limit", common.DEFAULT_FILE_SCAN_LIMIT))
+                self.prescan_enabled = bool(int(data.get("prescan_enabled", "1")))
+                self.wait_for_idle = bool(int(data.get("wait_for_idle", "1")))
         except Exception as e:
             logging.error(f"Failed to load config: {e}")
             raise
@@ -51,7 +51,6 @@ class Config:
             data = {
                 "repo": self.repo,
                 "full_check_frequency": str(self.full_check_frequency),
-                "prune_frequency": str(self.prune_frequency),
                 "error_check_frequency": str(self.error_check_frequency),
                 "bitrot_detection": "1" if self.bitrot_detection else "0",
                 "prune_enabled": "1" if self.prune_enabled else "0",
@@ -62,7 +61,8 @@ class Config:
                 "update_check_enabled": "1" if self.update_check_enabled else "0",
                 "update_check_frequency": str(self.update_check_frequency),
                 "update_check_toast_interval": str(self.update_check_toast_interval),
-                "prescan_file_limit": str(self.prescan_file_limit)
+                "prescan_enabled": "1" if self.prescan_enabled else "0",
+                "wait_for_idle": "1" if self.wait_for_idle else "0"
             }
             with common.db_conn as conn:
                 for k, v in data.items():

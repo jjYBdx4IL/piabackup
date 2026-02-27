@@ -14,17 +14,17 @@ from windows_toasts import Toast
 
 import piabackup.common as common
 from piabackup.backup_dir import BackupDir
+from piabackup.config import Config
 from piabackup.default_dirs_scanner import DefaultDirsScanner
 from piabackup.fast_scan import FastScan
 from piabackup.restic import Restic
 from piabackup.sleep_inhibitor import SleepInhibitor
-from piabackup.update_checker import UpdateChecker
 
 
 class WorkerTask:
     def __init__(self, **kwargs):
         tid = kwargs.get("task_id", None)
-        self._task_id:str = str(tid) if tid is not None else None
+        self._task_id: str | None = str(tid) if tid is not None else None
 
     @property
     def task_id(self):
@@ -51,7 +51,7 @@ class WorkerTask:
 
 
 class StreamingResticTask(WorkerTask):
-    def __init__(self, env, no_lock, *args, iexclude=None, backup_path=None, **kwargs):
+    def __init__(self, env, no_lock, *args, iexclude, backup_path, **kwargs):
         super().__init__(**kwargs)
         self.env = env
         self.no_lock = no_lock
@@ -79,15 +79,17 @@ class StreamingResticTask(WorkerTask):
 
             p = subprocess.Popen(cmd, text=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=self.env, startupinfo=startupinfo, bufsize=1, universal_newlines=True)
             
-            for line in p.stdout:
-                logging.info(line.strip())
-                self.on_output(line)
+            if p.stdout:
+                for line in p.stdout:
+                    logging.info(line.strip())
+                    self.on_output(line)
             
             stderr_output = ""
-            for line in p.stderr:
-                stderr_output += line
-                logging.error(line.strip())
-                self.on_output(line)
+            if p.stderr:
+                for line in p.stderr:
+                    stderr_output += line
+                    logging.error(line.strip())
+                    self.on_output(line)
 
             rc = p.wait()
             if rc != 0:
@@ -105,7 +107,7 @@ class ListSnapshotsTask(WorkerTask):
         class MockConfig:
             def __init__(self, no_lock):
                 self.no_lock = no_lock
-        return r.list_snapshots(MockConfig(self.no_lock), self.env, self.tag)
+        return r.list_snapshots(MockConfig(self.no_lock), self.env, self.tag) # type: ignore
 
 class LsTask(WorkerTask):
     def __init__(self, env, snap_id, no_lock, **kwargs):
@@ -231,8 +233,9 @@ class BackupTask(WorkerTask):
     def run(self):
         restic = Restic()
         entry = self.backup_dir
-        cfg = self.config
+        cfg:Config = self.config
         env = self.env
+        now = time.time()
 
         try:
             entry.error = ""
@@ -258,12 +261,11 @@ class BackupTask(WorkerTask):
             if entry.fastscan_fingerprint == "0":
                 should_run = True
             else:
-                limit = cfg.prescan_file_limit
-                if limit <= 0:
+                if not cfg.prescan_enabled:
                     should_run = True
                 else:
                     try:
-                        fp = FastScan.directory_fingerprint(entry.path, limit=limit)
+                        fp = FastScan.directory_fingerprint(entry.path)
                         
                         if fp is None:
                             entry.fastscan_fingerprint = "0"
@@ -279,8 +281,7 @@ class BackupTask(WorkerTask):
                         logging.error(f"Scan failed for {entry.path}: {e}")
                         should_run = True
             
-            needs_prune = cfg.prune_enabled and (time.time() >= entry.last_prune + cfg.prune_frequency)
-            full_check = needs_prune and cfg.bitrot_detection
+            full_check = now >= entry.last_fullcheck + cfg.full_check_frequency
 
             if full_check:
                 should_run = True
@@ -290,17 +291,20 @@ class BackupTask(WorkerTask):
                 return entry
 
             entry.summary = restic.run_backup_cmd(entry.path, env, full_check, cfg.no_lock, entry.iexclude)
-            entry.n_backups_since_last_perm_tag += 1
             
-            if needs_prune:
-                if cfg.bitrot_detection:
-                    logging.info(f"Checking for bitrot for {entry.path}...")
-                    entry.bitrot_snap = restic.check_bitrot(cfg, env, entry.get_tag(), entry.bitrot_snap)
-                
-                logging.info(f"Pruning repository for {entry.path}...")
+            if cfg.bitrot_detection:
+                logging.info(f"Checking for bitrot for {entry.path}...")
+                entry.bitrot_snap = restic.check_bitrot(cfg, env, entry.get_tag(), entry.bitrot_snap)
+
+            if cfg.prune_enabled:
+                logging.info(f"Pruning repository for {entry.path}... (not recommended on consumer grade hw)")
+                if not cfg.bitrot_detection:
+                    logging.warning("Pruning with disabled bitrot detection is not recommended.")
                 restic.forget_some(entry.get_tag(), env)
-                entry.last_prune = time.time()
                 
+            entry.n_backups_since_last_perm_tag += 1
+            if full_check:
+                entry.last_fullcheck = now
         except Exception as ex:
             logging.error(f"Backup failed for {entry.path}: {ex}")
             entry.error = str(ex)
@@ -312,14 +316,14 @@ class AutoDiscoveryTask(WorkerTask):
         scanner = DefaultDirsScanner()
         return scanner.scan()
 
-    def on_success(self, found):
+    def on_success(self, res):
         with common.db_conn as conn:
-            if found:
+            if res:
                 existing_rows = conn.execute("SELECT path FROM backup_dirs").fetchall()
                 existing_paths = {r[0].lower() for r in existing_rows}
                 
                 added_count = 0
-                for item in found:
+                for item in res:
                     p = item['path']
                     if p.lower() not in existing_paths:
                         exclusions = "\n".join(item['exclusions'])
@@ -334,26 +338,6 @@ class AutoDiscoveryTask(WorkerTask):
                     common.wintoaster.show_toast(toast)
 
             conn.execute("INSERT OR REPLACE INTO status (key, value) VALUES (?, ?)", ("last_auto_discovery", str(time.time())))
-
-class UpdateCheckTask(WorkerTask):
-    def run(self):
-        return UpdateChecker.fetch_latest_release_info(timeout=60)
-
-    def on_success(self, result):
-        data, remote_ver, html_url, tag = result
-        uc = UpdateChecker()
-        uc.last_check = time.time()
-        
-        is_newer = UpdateChecker.is_newer(remote_ver, common.APP_VERSION)
-        uc.cached_version = json.dumps(data) if is_newer else ""
-        uc.save_state()
-
-    def on_failure(self, e):
-        logging.error(f"Update check failed: {e}")
-        uc = UpdateChecker()
-        uc.last_check = time.time()
-        uc.cached_version = "ERROR"
-        uc.save_state()
 
 class RepoFullCheckTask(WorkerTask):
     def __init__(self, env, config, segment, **kwargs):
@@ -382,9 +366,9 @@ class RepoFullCheckTask(WorkerTask):
         return self.segment
 
 class WorkerThread(threading.Thread):
-    _task_queue:queue.Queue[WorkerTask] = queue.Queue()
+    _task_queue:queue.Queue[WorkerTask|None] = queue.Queue()
     _task_id_set:set[str] = set()
-    _singleton:threading.Thread = None
+    _singleton:threading.Thread|None = None
     _lock = threading.RLock()
     _shutdown_requested = False
 
@@ -473,10 +457,11 @@ class WorkerThread(threading.Thread):
         with WorkerThread._lock:
             WorkerThread._shutdown_requested = True
             if WorkerThread._singleton and WorkerThread._singleton.is_alive():
-                while not WorkerThread._task_queue.empty():
+                # Drain the queue to cancel pending tasks.
+                while True:
                     try:
                         WorkerThread._task_queue.get_nowait()
-                        WorkerThread._task_queue.task_done()
+                        # Do not call task_done for tasks that are not processed.
                     except queue.Empty:
                         break
                 WorkerThread._task_queue.put(None)
@@ -491,4 +476,4 @@ class WorkerThread(threading.Thread):
     @staticmethod
     def isalive() -> bool:
         with WorkerThread._lock:
-            return WorkerThread._singleton and WorkerThread._singleton.is_alive()
+            return WorkerThread._singleton is not None and WorkerThread._singleton.is_alive()

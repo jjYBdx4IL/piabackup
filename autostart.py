@@ -7,6 +7,7 @@ import winreg
 from ctypes import wintypes
 from tkinter import messagebox
 
+from piabackup import APPNAME
 import piabackup.common as common
 
 
@@ -23,7 +24,7 @@ def is_auto_start():
         if is_running_in_sandbox():
             return True # Managed by AppX Manifest
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
-        winreg.QueryValueEx(key, common.APPNAME)
+        winreg.QueryValueEx(key, APPNAME)
         winreg.CloseKey(key)
         return True
     except OSError:
@@ -46,11 +47,11 @@ def toggle_auto_start(enable):
             else:
                 python_exe = sys.executable.replace("python.exe", "pythonw.exe") if "python.exe" in sys.executable else sys.executable
                 command = f'"{python_exe}" "{os.path.abspath(__file__)}"'
-            winreg.SetValueEx(key, common.APPNAME, 0, winreg.REG_SZ, command)
+            winreg.SetValueEx(key, APPNAME, 0, winreg.REG_SZ, command)
             logging.info("Autostart enabled")
         else:
             try:
-                winreg.DeleteValue(key, common.APPNAME)
+                winreg.DeleteValue(key, APPNAME)
                 logging.info("Autostart disabled")
             except FileNotFoundError:
                 pass

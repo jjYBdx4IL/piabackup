@@ -15,6 +15,7 @@ from tkinter import messagebox, ttk
 
 import keyring
 
+from piabackup import APPNAME, APP_VERSION
 import piabackup.common as common
 from piabackup.auto_detect_dialog import AutoDetectDialog
 from piabackup.autostart import (is_auto_start, is_running_in_sandbox,
@@ -28,16 +29,16 @@ from piabackup.frequency import format_frequency, parse_frequency
 from piabackup.help_window import HelpWindow
 from piabackup.password_dialog import PasswordDialog
 from piabackup.rewrite_window import RewriteWindow
-from piabackup.restic import Restic
-from piabackup.update_checker import UpdateChecker
 from piabackup.worker_thread import GetAllPathsTask, UnlockTask, WorkerThread
+from ui.github_update_checker import GithubUpdateChecker
+from ui.tools import Tools
 
 
 class SettingsWindow(tk.Toplevel):
     def __init__(self, parent, on_trigger_run=None):
         super().__init__(parent)
         self.on_trigger_run = on_trigger_run
-        self.title("Configuration")
+        self.title(f"{APPNAME} {APP_VERSION} - Configuration")
         
         self.config = Config()
         self.dirs:list[BackupDir] = []
@@ -48,7 +49,6 @@ class SettingsWindow(tk.Toplevel):
         self.var_autostart = tk.BooleanVar(value=is_auto_start())
         self.var_repo = tk.StringVar(value=self.config.repo)
         self.var_check_freq = tk.StringVar(value=format_frequency(self.config.full_check_frequency))
-        self.var_prune_freq = tk.StringVar(value=format_frequency(self.config.prune_frequency))
         self.var_err_freq = tk.StringVar(value=format_frequency(self.config.error_check_frequency))
         self.var_bitrot = tk.BooleanVar(value=self.config.bitrot_detection)
         self.var_prune_enabled = tk.BooleanVar(value=self.config.prune_enabled)
@@ -58,7 +58,8 @@ class SettingsWindow(tk.Toplevel):
         self.var_update_enabled = tk.BooleanVar(value=self.config.update_check_enabled)
         self.var_update_freq = tk.StringVar(value=format_frequency(self.config.update_check_frequency))
         self.var_update_toast_freq = tk.StringVar(value=format_frequency(self.config.update_check_toast_interval))
-        self.var_prescan_limit = tk.StringVar(value=str(self.config.prescan_file_limit))
+        self.var_prescan_enabled = tk.BooleanVar(value=self.config.prescan_enabled)
+        self.var_wait_for_idle = tk.BooleanVar(value=self.config.wait_for_idle)
         
         main_frame = ttk.Frame(self)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -120,10 +121,8 @@ class SettingsWindow(tk.Toplevel):
 
         ttk.Checkbutton(frame, text="Make vanished root folders' latest backups permanent", variable=self.var_make_vanished_permanent).pack(anchor=tk.W)
         
-        ps_frame = ttk.Frame(frame)
-        ps_frame.pack(fill=tk.X, pady=(5, 0))
-        ttk.Label(ps_frame, text="Prescan File Limit (0=disable prescan):").pack(side=tk.LEFT)
-        ttk.Entry(ps_frame, textvariable=self.var_prescan_limit, width=10).pack(side=tk.LEFT, padx=(5, 5))
+        ttk.Checkbutton(frame, text="Enable Prescan", variable=self.var_prescan_enabled).pack(anchor=tk.W)
+        ttk.Checkbutton(frame, text="Wait for user idle before backing up", variable=self.var_wait_for_idle).pack(anchor=tk.W)
 
         err_frame = ttk.Frame(frame)
         err_frame.pack(fill=tk.X, pady=(5, 0))
@@ -164,10 +163,7 @@ class SettingsWindow(tk.Toplevel):
 
         prune_frame = ttk.Frame(frame)
         prune_frame.pack(fill=tk.X, pady=(0, 5))
-        ttk.Checkbutton(prune_frame, text="Enable Prune", variable=self.var_prune_enabled, command=self.update_bitrot_state).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Label(prune_frame, text="Frequency:").pack(side=tk.LEFT)
-        ttk.Entry(prune_frame, textvariable=self.var_prune_freq, width=10).pack(side=tk.LEFT, padx=(5, 5))
-        ttk.Button(prune_frame, text="Trigger Now", command=self.trigger_prune).pack(side=tk.LEFT)
+        ttk.Checkbutton(prune_frame, text="Enable Prune", variable=self.var_prune_enabled).pack(side=tk.LEFT, padx=(0, 5))
         self.chk_bitrot = ttk.Checkbutton(prune_frame, text="Enable Bitrot Detection", variable=self.var_bitrot)
         self.chk_bitrot.pack(side=tk.LEFT, padx=(50, 5))
 
@@ -201,7 +197,7 @@ class SettingsWindow(tk.Toplevel):
         self.tree.tag_configure("unsaved", foreground="gray")
         
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscroll=scrollbar.set)
+        self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         self.tree.bind("<Double-1>", lambda e: self.edit_dir())
@@ -249,25 +245,19 @@ class SettingsWindow(tk.Toplevel):
         target_width = min(req_width + 50, screen_width - 50)
         target_height = min(req_height + 40, screen_height - 100)
         
-        self.update_bitrot_state()
-        
-        common.center_window(self, target_width, target_height)
+        Tools.center_window(self, target_width, target_height)
 
     def check_updates_now(self):
-        UpdateChecker.check_now_interactive(self)
-
-    def update_bitrot_state(self):
-        if self.var_prune_enabled.get():
-            self.chk_bitrot.state(['!disabled'])
-        else:
-            self.chk_bitrot.state(['disabled'])
+        uc = GithubUpdateChecker.get_instance()
+        if uc:
+            uc.check_now_interactive(self)
 
     def show_help(self):
         HelpWindow(self)
 
     def create_elevated_task(self):
         exe_path = sys.executable
-        task_name = f"{common.APPNAME}_autostart"
+        task_name = f"{APPNAME}_autostart"
         uname = os.getlogin()
         
         # PowerShell script to create/update the task with desired settings
@@ -292,7 +282,7 @@ class SettingsWindow(tk.Toplevel):
             if ret <= 32:
                 raise Exception(f"ShellExecute failed with code {ret}")
             
-            messagebox.showinfo(common.APPNAME, f"Task creation command issued.\n\nTask Name: {task_name}\nTarget: {exe_path}")
+            messagebox.showinfo(APPNAME, f"Task creation command issued.\n\nTask Name: {task_name}\nTarget: {exe_path}")
         except Exception as e:
             logging.error(f"Failed to create elevated task: {e}")
             messagebox.showerror("Error", f"Failed to create task: {e}")
@@ -302,19 +292,10 @@ class SettingsWindow(tk.Toplevel):
             with common.db_conn as conn:
                 conn.execute("INSERT OR REPLACE INTO status (key, value) VALUES (?, ?)", ("last_full_check", "0"))
                 conn.execute("INSERT OR REPLACE INTO status (key, value) VALUES (?, ?)", ("last_full_check_segment", "-1"))
-            messagebox.showinfo(common.APPNAME, "Full check triggered.\nBackups have priority.")
+            messagebox.showinfo(APPNAME, "Full check triggered.\nBackups have priority.")
         except Exception as e:
             logging.error(f"Failed to trigger full check: {e}")
             messagebox.showerror("Error", f"Failed to trigger full check: {e}")
-
-    def trigger_prune(self):
-        try:
-            with common.db_conn as conn:
-                conn.execute("UPDATE backup_dirs SET last_prune = 0")
-            messagebox.showinfo(common.APPNAME, "Prune triggered.\nIt will be executed after each dir's next backup.")
-        except Exception as e:
-            logging.error(f"Failed to trigger prune: {e}")
-            messagebox.showerror("Error", f"Failed to trigger prune: {e}")
 
     def on_tree_select(self, event):
         selected = self.tree.selection()
@@ -354,19 +335,19 @@ class SettingsWindow(tk.Toplevel):
         env = os.environ.copy()
         
         if repo:
-            password = keyring.get_password(common.APPNAME, "repository")
+            password = keyring.get_password(APPNAME, "repository")
             if not password:
-                if messagebox.askyesno(common.APPNAME, "Repository password is not set. Set it now?"):
+                if messagebox.askyesno(APPNAME, "Repository password is not set. Set it now?"):
                     dlg = PasswordDialog(self)
                     self.wait_window(dlg)
-                    password = keyring.get_password(common.APPNAME, "repository")
+                    password = keyring.get_password(APPNAME, "repository")
                 
                 if not password:
                     return
             env["RESTIC_REPOSITORY"] = repo
             env["RESTIC_PASSWORD"] = password
         elif "RESTIC_REPOSITORY" not in env:
-            messagebox.showerror(common.APPNAME, "Repository not configured.")
+            messagebox.showerror(APPNAME, "Repository not configured.")
             return
 
         startupinfo = subprocess.STARTUPINFO()
@@ -375,26 +356,26 @@ class SettingsWindow(tk.Toplevel):
         try:
             res = subprocess.run(["restic", "cat", "config"], env=env, capture_output=True, text=True, startupinfo=startupinfo)
             if res.returncode == 0:
-                messagebox.showinfo(common.APPNAME, "Connection successful!")
+                messagebox.showinfo(APPNAME, "Connection successful!")
                 return
             if res.returncode == 11:
-                messagebox.showinfo(common.APPNAME, "Connection successful (but repository is locked)!")
+                messagebox.showinfo(APPNAME, "Connection successful (but repository is locked)!")
                 return
             if res.returncode == 12:
-                messagebox.showinfo(common.APPNAME, "Password incorrect!")
+                messagebox.showinfo(APPNAME, "Password incorrect!")
                 return
             
             if res.returncode == 10:
-                if messagebox.askyesno(common.APPNAME, "Repository not found or uninitialized.\nInitialize it now?"):
+                if messagebox.askyesno(APPNAME, "Repository not found or uninitialized.\nInitialize it now?"):
                     res = subprocess.run(["restic", "init"], env=env, capture_output=True, text=True, startupinfo=startupinfo)
                     if res.returncode == 0:
-                        messagebox.showinfo(common.APPNAME, "Repository initialized!")
+                        messagebox.showinfo(APPNAME, "Repository initialized!")
                     else:
-                        messagebox.showerror(common.APPNAME, f"Initialization failed:\n{res.stderr}")
+                        messagebox.showerror(APPNAME, f"Initialization failed:\n{res.stderr}")
             else:
-                messagebox.showerror(common.APPNAME, f"Connection failed:\n{res.stderr}")
+                messagebox.showerror(APPNAME, f"Connection failed:\n{res.stderr}")
         except Exception as e:
-            messagebox.showerror(common.APPNAME, f"Error running restic: {e}")
+            messagebox.showerror(APPNAME, f"Error running restic: {e}")
 
     def load_dirs(self):
         try:
@@ -404,6 +385,7 @@ class SettingsWindow(tk.Toplevel):
 
     @staticmethod
     def format_bytes(size):
+        unit = ""
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
             if size < 1024.0:
                 break
@@ -556,39 +538,39 @@ class SettingsWindow(tk.Toplevel):
         env = os.environ.copy()
         
         if repo:
-            password = keyring.get_password(common.APPNAME, "repository")
+            password = keyring.get_password(APPNAME, "repository")
             if not password:
-                if messagebox.askyesno(common.APPNAME, "Repository password is not set. Set it now?"):
+                if messagebox.askyesno(APPNAME, "Repository password is not set. Set it now?"):
                     dlg = PasswordDialog(self)
                     self.wait_window(dlg)
-                    password = keyring.get_password(common.APPNAME, "repository")
+                    password = keyring.get_password(APPNAME, "repository")
                 
                 if not password:
                     return
             env["RESTIC_REPOSITORY"] = repo
             env["RESTIC_PASSWORD"] = password
         elif "RESTIC_REPOSITORY" not in env:
-            messagebox.showerror(common.APPNAME, "Repository not configured.")
+            messagebox.showerror(APPNAME, "Repository not configured.")
             return
 
         self.btn_import.state(['disabled'])
         self.progress_window = tk.Toplevel(self)
         self.progress_window.title("Importing")
-        common.center_window(self.progress_window, 300, 100)
+        Tools.center_window(self.progress_window, 300, 100)
         ttk.Label(self.progress_window, text="Reading repository snapshots...\nPlease wait.", padding=20).pack()
         self.progress_window.transient(self)
         self.progress_window.grab_set()
         self.progress_window.protocol("WM_DELETE_WINDOW", lambda: None)
 
         class ImportTask(GetAllPathsTask):
-            def on_success(self_task, paths):
+            def on_success(self_task, paths): # type: ignore
                 self.progress_window.destroy()
                 self.btn_import.state(['!disabled'])
                 self.process_import_data(paths)
-            def on_failure(self_task, e):
+            def on_failure(self_task, e): # type: ignore
                 self.progress_window.destroy()
                 self.btn_import.state(['!disabled'])
-                messagebox.showerror(common.APPNAME, f"Import failed: {e}")
+                messagebox.showerror(APPNAME, f"Import failed: {e}")
 
         WorkerThread.submit_task(ImportTask(env, self.var_no_lock.get()))
 
@@ -608,9 +590,9 @@ class SettingsWindow(tk.Toplevel):
         if count > 0:
             self.refresh_tree()
             if first_new: self.select_item(first_new)
-            messagebox.showinfo(common.APPNAME, f"Imported {count} new folders from repository.")
+            messagebox.showinfo(APPNAME, f"Imported {count} new folders from repository.")
         else:
-            messagebox.showinfo(common.APPNAME, "No new folders found in repository.")
+            messagebox.showinfo(APPNAME, "No new folders found in repository.")
 
     def import_paths(self):
         filename = filedialog.askopenfilename(defaultextension=".txt", filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
@@ -638,11 +620,11 @@ class SettingsWindow(tk.Toplevel):
             if count > 0:
                 self.refresh_tree()
                 if first_new: self.select_item(first_new)
-                messagebox.showinfo(common.APPNAME, f"Imported {count} new paths.")
+                messagebox.showinfo(APPNAME, f"Imported {count} new paths.")
             else:
-                messagebox.showinfo(common.APPNAME, "No new paths found in file.")
+                messagebox.showinfo(APPNAME, "No new paths found in file.")
         except Exception as e:
-            messagebox.showerror(common.APPNAME, f"Failed to import: {e}")
+            messagebox.showerror(APPNAME, f"Failed to import: {e}")
 
     def export_paths(self):
         filename = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
@@ -652,9 +634,9 @@ class SettingsWindow(tk.Toplevel):
             with open(filename, 'w', encoding='utf-8') as f:
                 for d in sorted(self.dirs, key=lambda d: str(d.path).lower()):
                     f.write(f"{d.path}\n")
-            messagebox.showinfo(common.APPNAME, f"Exported {len(self.dirs)} paths.")
+            messagebox.showinfo(APPNAME, f"Exported {len(self.dirs)} paths.")
         except Exception as e:
-            messagebox.showerror(common.APPNAME, f"Failed to export: {e}")
+            messagebox.showerror(APPNAME, f"Failed to export: {e}")
 
     def add_dir(self):
         path = filedialog.askdirectory()
@@ -682,7 +664,7 @@ class SettingsWindow(tk.Toplevel):
                     new_items.append(item)
             
             if not new_items:
-                messagebox.showinfo(common.APPNAME, "No new paths found.")
+                messagebox.showinfo(APPNAME, "No new paths found.")
                 return
 
             display_paths = [item['path'] for item in new_items]
@@ -708,10 +690,10 @@ class SettingsWindow(tk.Toplevel):
                 if count > 0:
                     self.refresh_tree()
                     if first_new: self.select_item(first_new)
-                    messagebox.showinfo(common.APPNAME, f"Added {count} new paths.")
+                    messagebox.showinfo(APPNAME, f"Added {count} new paths.")
         except Exception as e:
             logging.error(f"Auto detect failed: {e}")
-            messagebox.showerror(common.APPNAME, f"Auto detect failed: {e}")
+            messagebox.showerror(APPNAME, f"Auto detect failed: {e}")
 
     def run_selected(self):
         selected = self.tree.selection()
@@ -729,12 +711,12 @@ class SettingsWindow(tk.Toplevel):
                             updated_db = True
         except Exception as e:
             logging.error(f"Failed to update next_run: {e}")
-            messagebox.showerror(common.APPNAME, f"Failed to schedule run: {e}")
+            messagebox.showerror(APPNAME, f"Failed to schedule run: {e}")
             
         self.refresh_tree()
         if updated_db:
             if self.on_trigger_run:
-                self.on_trigger_run()
+                self.on_trigger_run(True)
             WorkerThread.start_worker_thread()
 
     def rewrite_dir(self):
@@ -751,19 +733,19 @@ class SettingsWindow(tk.Toplevel):
         env = os.environ.copy()
 
         if repo:
-            password = keyring.get_password(common.APPNAME, "repository")
+            password = keyring.get_password(APPNAME, "repository")
             if not password:
-                if messagebox.askyesno(common.APPNAME, "Repository password is not set. Set it now?"):
+                if messagebox.askyesno(APPNAME, "Repository password is not set. Set it now?"):
                     dlg = PasswordDialog(self)
                     self.wait_window(dlg)
-                    password = keyring.get_password(common.APPNAME, "repository")
+                    password = keyring.get_password(APPNAME, "repository")
 
                 if not password:
                     return
             env["RESTIC_REPOSITORY"] = repo
             env["RESTIC_PASSWORD"] = password
         elif "RESTIC_REPOSITORY" not in env:
-            messagebox.showerror(common.APPNAME, "Repository not configured.")
+            messagebox.showerror(APPNAME, "Repository not configured.")
             return
 
         RewriteWindow(self, entry, env, self.var_no_lock.get())
@@ -808,24 +790,24 @@ class SettingsWindow(tk.Toplevel):
         env = os.environ.copy()
         
         if repo:
-            password = keyring.get_password(common.APPNAME, "repository")
+            password = keyring.get_password(APPNAME, "repository")
             if not password:
-                if messagebox.askyesno(common.APPNAME, "Repository password is not set. Set it now?"):
+                if messagebox.askyesno(APPNAME, "Repository password is not set. Set it now?"):
                     dlg = PasswordDialog(self)
                     self.wait_window(dlg)
-                    password = keyring.get_password(common.APPNAME, "repository")
+                    password = keyring.get_password(APPNAME, "repository")
                 
                 if not password:
                     return
             env["RESTIC_REPOSITORY"] = repo
             env["RESTIC_PASSWORD"] = password
         elif "RESTIC_REPOSITORY" not in env:
-            messagebox.showerror(common.APPNAME, "Repository not configured.")
+            messagebox.showerror(APPNAME, "Repository not configured.")
             return
 
         dlg = tk.Toplevel(self)
         dlg.title("Unlock Repository")
-        common.center_window(dlg, 450, 250)
+        Tools.center_window(dlg, 450, 250)
         
         ttk.Label(dlg, text="WARNING: Unlocking the repository can be dangerous if another backup or maintenance process is currently running. It may lead to data corruption.", wraplength=400, foreground="red").pack(pady=10, padx=10)
         
@@ -865,10 +847,10 @@ class SettingsWindow(tk.Toplevel):
             dlg.destroy()
             
             class MyUnlockTask(UnlockTask):
-                def on_success(self_task, res):
-                    messagebox.showinfo(common.APPNAME, "Repository unlocked successfully.")
-                def on_failure(self_task, e):
-                    messagebox.showerror(common.APPNAME, f"Unlock failed: {e}")
+                def on_success(self_task, res): # type: ignore
+                    messagebox.showinfo(APPNAME, "Repository unlocked successfully.")
+                def on_failure(self_task, e): # type: ignore
+                    messagebox.showerror(APPNAME, f"Unlock failed: {e}")
 
             WorkerThread.submit_task(MyUnlockTask(env, False, task_id="unlock"))
 
@@ -895,19 +877,19 @@ class SettingsWindow(tk.Toplevel):
         env = os.environ.copy()
         
         if repo:
-            password = keyring.get_password(common.APPNAME, "repository")
+            password = keyring.get_password(APPNAME, "repository")
             if not password:
-                if messagebox.askyesno(common.APPNAME, "Repository password is not set. Set it now?"):
+                if messagebox.askyesno(APPNAME, "Repository password is not set. Set it now?"):
                     dlg = PasswordDialog(self)
                     self.wait_window(dlg)
-                    password = keyring.get_password(common.APPNAME, "repository")
+                    password = keyring.get_password(APPNAME, "repository")
                 
                 if not password:
                     return
             env["RESTIC_REPOSITORY"] = repo
             env["RESTIC_PASSWORD"] = password
         elif "RESTIC_REPOSITORY" not in env:
-            messagebox.showerror(common.APPNAME, "Repository not configured.")
+            messagebox.showerror(APPNAME, "Repository not configured.")
             return
             
         BrowseDialog(self, entry, env, self.var_no_lock.get())
@@ -927,7 +909,7 @@ class SettingsWindow(tk.Toplevel):
         # Dialog
         dlg = tk.Toplevel(self)
         dlg.title("Edit Folder")
-        common.center_window(dlg, 300, 200)
+        Tools.center_window(dlg, 300, 200)
         
         ttk.Label(dlg, text="Path: " + path, wraplength=280).pack(pady=10, padx=10)
         
@@ -969,7 +951,6 @@ class SettingsWindow(tk.Toplevel):
         
         try:
             self.config.full_check_frequency = parse_frequency(self.var_check_freq.get())
-            self.config.prune_frequency = parse_frequency(self.var_prune_freq.get())
             self.config.error_check_frequency = parse_frequency(self.var_err_freq.get())
             self.config.bitrot_detection = self.var_bitrot.get()
             self.config.prune_enabled = self.var_prune_enabled.get()
@@ -980,19 +961,24 @@ class SettingsWindow(tk.Toplevel):
             self.config.update_check_frequency = max(common.MIN_UPDATE_CHECK_IVAL, parse_frequency(self.var_update_freq.get()))
             self.config.update_check_toast_interval = parse_frequency(self.var_update_toast_freq.get())
             
-            try:
-                self.config.prescan_file_limit = int(self.var_prescan_limit.get())
-                if self.config.prescan_file_limit < 0: raise ValueError
-            except ValueError:
-                messagebox.showerror(common.APPNAME, "Invalid Prescan File Limit (must be >= 0)")
-                return
+            self.config.prescan_enabled = self.var_prescan_enabled.get()
+            self.config.wait_for_idle = self.var_wait_for_idle.get()
         except Exception as e:
-            messagebox.showerror(common.APPNAME, f"Invalid frequency: {e}")
+            messagebox.showerror(APPNAME, f"Invalid frequency: {e}")
             return
 
         self.config.repo = self.var_repo.get()
         self.config.save()
         
+        # Update running checker
+        uc = GithubUpdateChecker.get_instance()
+        if uc:
+            uc.stop()
+            if self.config.update_check_enabled:
+                uc.check_frequency = self.config.update_check_frequency
+                uc.toast_interval = self.config.update_check_toast_interval
+                uc.start()
+
         try:
             with common.db_conn:
                 # Handle deletions
@@ -1004,6 +990,6 @@ class SettingsWindow(tk.Toplevel):
                     d.save_ui()
         except Exception as e:
             logging.error(f"Failed to save backup dirs: {e}")
-            messagebox.showerror(common.APPNAME, f"Failed to save backup directories: {e}")
+            messagebox.showerror(APPNAME, f"Failed to save backup directories: {e}")
             
         self.destroy()

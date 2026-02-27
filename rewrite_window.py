@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 import piabackup.common as common
 from piabackup.worker_thread import StreamingResticTask, WorkerThread
+from ui.tools import Tools
 
 
 class RewriteWindow(tk.Toplevel):
@@ -13,7 +14,6 @@ class RewriteWindow(tk.Toplevel):
         self.env = env
         self.no_lock = no_lock
         self.title(f"Rewrite - {os.path.basename(self.backup_dir.path)}")
-        common.center_window(self, 600, 400)
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
@@ -43,7 +43,7 @@ class RewriteWindow(tk.Toplevel):
 
         self.transient(parent)
 
-        common.center_window(self, 600, 400)
+        Tools.center_window(self, 600, 400)
 
     def append_output(self, text):
         self.output_text.config(state=tk.NORMAL)
@@ -59,20 +59,20 @@ class RewriteWindow(tk.Toplevel):
         self.output_text.config(state=tk.DISABLED)
 
         class RewriteTask(StreamingResticTask):
-            def __init__(self_task, env, no_lock, path, tag, iexclude, dry_run):
+            def __init__(self_task, env, no_lock, path, tag, iexclude, dry_run): # type: ignore
                 args = ["rewrite", "--path", str(path), "--tag", tag, "--forget"]
                 if dry_run:
                     args.append("--dry-run")
                 super().__init__(env, no_lock, *args, iexclude=iexclude, backup_path=path)
 
-            def on_output(self_task, line):
+            def on_output(self_task, line): # type: ignore
                 self.append_output(line)
 
-            def on_success(self_task, result):
+            def on_success(self_task, result): # type: ignore
                 self.append_output("\nRewrite completed successfully.")
                 self.start_button.config(state=tk.NORMAL)
 
-            def on_failure(self_task, e):
+            def on_failure(self_task, e): # type: ignore
                 self.append_output(f"\nRewrite failed: {e}")
                 self.start_button.config(state=tk.NORMAL)
 

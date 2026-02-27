@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 import piabackup.common as common
 from piabackup.worker_thread import (FindTask, ListSnapshotsTask, LsTask,
                                      RestoreTask, TagSnapshotTask, WorkerThread)
+from ui.tools import Tools
 
 
 class FileNode:
@@ -44,7 +45,7 @@ class BrowseDialog(tk.Toplevel):
         self.tree_snaps.column("tags", width=100)
         
         sb_snaps = ttk.Scrollbar(frame_left, orient="vertical", command=self.tree_snaps.yview)
-        self.tree_snaps.configure(yscroll=sb_snaps.set)
+        self.tree_snaps.config(yscrollcommand=sb_snaps.set)
         
         self.tree_snaps.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb_snaps.pack(side=tk.RIGHT, fill=tk.Y)
@@ -66,12 +67,12 @@ class BrowseDialog(tk.Toplevel):
         self.tree_files.column("mtime", width=150)
         
         sb_files = ttk.Scrollbar(frame_right, orient="vertical", command=self.tree_files.yview)
-        self.tree_files.configure(yscroll=sb_files.set)
+        self.tree_files.config(yscrollcommand=sb_files.set)
         
         self.tree_files.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb_files.pack(side=tk.RIGHT, fill=tk.Y)
         
-        common.center_window(self, 1000, 600)
+        Tools.center_window(self, 1000, 600)
         
         self.tree_snaps.bind("<<TreeviewSelect>>", self.on_snap_select)
         self.tree_files.bind("<<TreeviewOpen>>", self.on_folder_open)
@@ -87,16 +88,16 @@ class BrowseDialog(tk.Toplevel):
         self.lbl_status.config(text="Loading snapshots...")
         
         class SnapListTask(ListSnapshotsTask):
-            def on_success(self_task, snaps):
+            def on_success(self_task, res): # type: ignore
                 self.lbl_status.config(text="Select a snapshot to browse files.")
-                snaps.sort(key=lambda x: x.get('_time', 0), reverse=True)
+                res.sort(key=lambda x: x.get('_time', 0), reverse=True)
                 path_tag = self.backup_dir.get_tag()
-                for s in snaps:
+                for s in res:
                     ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(s['_time']))
                     tags = s.get('tags', [])
                     display_tags = [t for t in tags if t != path_tag]
                     self.tree_snaps.insert("", tk.END, values=(ts, ", ".join(display_tags)), tags=(s['short_id'], s['id']))
-            def on_failure(self_task, e):
+            def on_failure(self_task, e): # type: ignore
                 self.lbl_status.config(text="Error loading snapshots.")
                 messagebox.showerror("Error", f"Failed to list snapshots: {e}")
 
@@ -122,11 +123,11 @@ class BrowseDialog(tk.Toplevel):
         self.lbl_status.config(text=f"Loading files for snapshot {short_id}...")
         
         class FileListTask(LsTask):
-            def on_success(self_task, data):
-                root = self.build_tree(data)
+            def on_success(self_task, res): # type: ignore
+                root = self.build_tree(res)
                 self.lbl_status.config(text=f"Snapshot: {short_id}")
                 self.populate_node("", root)
-            def on_failure(self_task, e):
+            def on_failure(self_task, e): # type: ignore
                 self.lbl_status.config(text=f"Error loading files: {e}")
                 messagebox.showerror("Error", f"Failed to list files: {e}")
 
@@ -216,6 +217,7 @@ class BrowseDialog(tk.Toplevel):
             self.populate_node(iid, node)
 
     def format_size(self, size):
+        unit = ""
         for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
             if size < 1024.0:
                 break
@@ -260,7 +262,7 @@ class BrowseDialog(tk.Toplevel):
         snap_id = self.tree_snaps.item(item, "tags")[1] # long id
         
         class MyTagTask(TagSnapshotTask):
-            def on_success(self_task, res):
+            def on_success(self_task, res): # type: ignore
                 # Update UI
                 values = self.tree_snaps.item(item, "values")
                 tags_str = values[1]
@@ -272,7 +274,7 @@ class BrowseDialog(tk.Toplevel):
                 
                 self.tree_snaps.item(item, values=(values[0], ", ".join(tags)))
                 self.lbl_status.config(text=f"'permanent' tag {'removed' if is_removing else 'added'}.")
-            def on_failure(self_task, e):
+            def on_failure(self_task, e): # type: ignore
                 messagebox.showerror("Error", f"Failed to update tag: {e}")
 
         WorkerThread.submit_task(MyTagTask(self.env, snap_id, "permanent", remove=is_removing, no_lock=self.no_lock))
@@ -313,7 +315,7 @@ class BrowseDialog(tk.Toplevel):
         self.lbl_status.config(text="Restoring..." if include_path else "Restoring snapshot...")
         
         class MyRestoreTask(RestoreTask):
-            def on_success(self_task, res):
+            def on_success(self_task, res): # type: ignore
                 summary, errmsgs = res
                 self.lbl_status.config(text="Restore successful.")
                 msg = "Restore completed successfully."
@@ -326,7 +328,7 @@ class BrowseDialog(tk.Toplevel):
                         os.startfile(target_dir)
                     except Exception as e:
                         messagebox.showerror("Error", f"Failed to open folder: {e}")
-            def on_failure(self_task, e):
+            def on_failure(self_task, e): # type: ignore
                 self.lbl_status.config(text="Restore failed.")
                 messagebox.showerror("Error", f"Restore failed: {e}")
 
@@ -348,11 +350,11 @@ class BrowseDialog(tk.Toplevel):
                                     .replace('*', '\\*')
         
         class HistoryFindTask(FindTask):
-            def on_success(self_task, data):
-                snap_ids = {res['snapshot'] for res in data}
+            def on_success(self_task, res): # type: ignore
+                snap_ids = {item['snapshot'] for item in res}
                 self.lbl_status.config(text=f"Found {len(snap_ids)} snapshots.")
                 HistoryDialog(self, snap_ids, self.switch_to_snapshot)
-            def on_failure(self_task, e):
+            def on_failure(self_task, e): # type: ignore
                 self.lbl_status.config(text="History search failed.")
                 messagebox.showerror("Error", f"History search failed: {e}")
 
@@ -382,7 +384,7 @@ class HistoryDialog(tk.Toplevel):
         tree.column("id", width=100)
         
         sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
-        tree.configure(yscroll=sb.set)
+        tree.configure(yscrollcommand=sb.set)
         
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -398,12 +400,10 @@ class HistoryDialog(tk.Toplevel):
         
         tree.bind("<Double-1>", lambda e: self.on_double_click(tree, on_select))
         
-        common.center_window(self, 400, 300)
         if count == 0:
             ttk.Label(self, text="No snapshots found (sync issue?)").pack()
-        
-        self.lift()
-        self.focus_force()
+            
+        Tools.center_window(self, 400, 300)
 
     def on_double_click(self, tree, on_select):
         selected = tree.selection()

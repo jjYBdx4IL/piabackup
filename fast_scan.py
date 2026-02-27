@@ -4,18 +4,24 @@ import os
 
 class FastScan:
     @staticmethod
-    def directory_fingerprint(path, limit=1000):
+    def directory_fingerprint(path):
         hasher = hashlib.sha256()
-        count = 0
-        for root, dirs, files in os.walk(path):
-            for name in files + dirs:
-                count += 1
-                if count > limit:
-                    return None
-                
-                file_path = os.path.join(root, name)
-                lmodtime = os.stat(file_path).st_mtime
-                
-                hasher.update(f"{lmodtime} {file_path}\0".encode('utf-8'))
+        stack = [path]
+        
+        while stack:
+            current_dir = stack.pop()
+            try:
+                with os.scandir(current_dir) as it:
+                    for entry in it:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            try:
+                                st = entry.stat()
+                                hasher.update(f"{st.st_mtime} {entry.path}\0".encode('utf-8'))
+                            except OSError:
+                                pass
+            except OSError:
+                continue
         
         return hasher.hexdigest()

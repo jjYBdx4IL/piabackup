@@ -19,6 +19,12 @@ class DefaultDirsScanner:
 C:\Jts
 {programfiles_x86}\Steam\userdata
 {programdata}\Arturia\Presets
+{home}\.android
+ -/avd/
+ -/cache/
+ -/metrics/
+ -/sdk/
+ -/studio/
 {home}\.gnupg
 {home}\.ssh
 {home}\AndroidStudioProjects

@@ -4,6 +4,7 @@ from tkinter import ttk
 
 import piabackup.common as common
 from piabackup.config import Config
+from ui.tools import Tools
 
 
 class DisclaimerWindow(tk.Toplevel):
@@ -43,7 +44,7 @@ class DisclaimerWindow(tk.Toplevel):
         ttk.Button(btn_frame, text="I Accept", command=self.accept).pack(side=tk.RIGHT, padx=5)
         ttk.Button(btn_frame, text="Refuse", command=self.on_refuse).pack(side=tk.RIGHT)
         
-        common.center_window(self, 550, 450)
+        Tools.center_window(self, 550, 450)
 
     def accept(self):
         cfg = Config()

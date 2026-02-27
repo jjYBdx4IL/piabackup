@@ -43,6 +43,8 @@ doesn't care about tags when pruning unless you explicitly tell it so.
 
 ## To-Do
 
+* Refactor autostart to elevated_autostart.py and check whether task scheduler task recreation is
+  necessary (on program start). If so, offer to update.
 * UI support to fix detected bit rot.
   * Manually skip snapshot for bit rot detection?
   * Bit rot specific file exclusions?
@@ -60,4 +62,4 @@ doesn't care about tags when pruning unless you explicitly tell it so.
 
 
 --
-git@nas:py.git@a1bd95b06a2fe46713bbaa77194172e37e2bbe18
+git@nas:py.git@aeb1a855a468d324d04eec2a32e96e6aab35639e

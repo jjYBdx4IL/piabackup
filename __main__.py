@@ -1,19 +1,24 @@
 #! /usr/bin/env python3
 # encoding: utf-8
-# @MAKEAPPX:AUTOSTART@
+import ctypes
 import logging
 import os
 import sys
-import ctypes
 import threading
 import time
 import tkinter as tk
+from ctypes import wintypes
 from tkinter import messagebox
 
 import keyring
 import portalocker
 import pystray
+from piabackup import APP_GITHUB_ID, APP_VERSION, APPNAME
+import ui.tools
 from PIL import Image, ImageDraw
+from ui.github_update_checker import GithubUpdateChecker
+from ui.licenses_window import LicensesWindow
+from ui.tkless import TkLess
 from windows_toasts import Toast
 
 import piabackup.common as common
@@ -24,12 +29,8 @@ from piabackup.disclaimer_window import DisclaimerWindow
 from piabackup.password_dialog import PasswordDialog
 from piabackup.settings_window import SettingsWindow
 from piabackup.tools_installer import ToolsInstaller
-from piabackup.update_checker import UpdateChecker
 from piabackup.worker_thread import (AutoDiscoveryTask, BackupTask,
-                                     RepoFullCheckTask, UpdateCheckTask,
-                                     WorkerThread)
-from ui.licenses_window import LicensesWindow
-from ui.tkless import TkLess
+                                     RepoFullCheckTask, WorkerThread)
 
 # Global variables
 tray_icon = None
@@ -42,14 +43,94 @@ licenses_window = None
 scheduler_timer = None
 last_error_check_time = 0
 
+WM_POWERBROADCAST = 0x218
+PBT_APMPOWERSTATUSCHANGE = 0xA
+PBT_APMRESUMEAUTOMATIC = 0x12
+PBT_APMRESUMESUSPEND = 0x7
+PBT_APMSUSPEND = 0x4
+PBT_POWERSETTINGCHANGE = 0x8013
+
+old_wnd_proc = None
+
+def wnd_proc(hwnd, msg, wparam, lparam):
+    logging.debug(f"wnd_proc: {hwnd} {msg} {wparam} {lparam}")
+    if msg == WM_POWERBROADCAST:
+        event_name = f"UNKNOWN({wparam})"
+        if wparam == PBT_APMPOWERSTATUSCHANGE: event_name = "PBT_APMPOWERSTATUSCHANGE"
+        elif wparam == PBT_APMRESUMEAUTOMATIC:
+            event_name = "PBT_APMRESUMEAUTOMATIC"
+            common.system_suspended = False
+            common.system_last_resumed = time.time()
+        elif wparam == PBT_APMRESUMESUSPEND:
+            event_name = "PBT_APMRESUMESUSPEND"
+            common.system_suspended = False
+            common.system_last_resumed = time.time()
+        elif wparam == PBT_APMSUSPEND:
+            event_name = "PBT_APMSUSPEND"
+            common.system_suspended = True
+        elif wparam == PBT_POWERSETTINGCHANGE: event_name = "PBT_POWERSETTINGCHANGE"
+        logging.debug(f"WM_POWERBROADCAST: {event_name}")
+
+    return ctypes.windll.user32.CallWindowProcW(old_wnd_proc, hwnd, msg, wparam, lparam)
+
+new_proc = 0
+def setup_power_broadcast_logging(root):
+    global old_wnd_proc, new_proc
+    hwnd = root.winfo_id()
+    
+    # 1. Force the OS to physically build the window before we grab its ID
+    root.update_idletasks()
+    
+    # 2. Get the Tkinter HWND
+    tk_hwnd = root.winfo_id()
+    
+    # 3. Traverse up to find the true top-level OS window (GA_ROOT = 2)
+    GA_ROOT = 2
+    hwnd = ctypes.windll.user32.GetAncestor(tk_hwnd, GA_ROOT)
+    
+    logging.debug(f"Tkinter HWND: {tk_hwnd} | True Top-Level HWND: {hwnd}")
+
+    RegisterSuspendResumeNotification = ctypes.windll.user32.RegisterSuspendResumeNotification
+    RegisterSuspendResumeNotification.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    RegisterSuspendResumeNotification.restype = wintypes.HANDLE
+    DEVICE_NOTIFY_WINDOW_HANDLE = 0x00000000
+    hPowerNotify = RegisterSuspendResumeNotification(wintypes.HANDLE(hwnd), DEVICE_NOTIFY_WINDOW_HANDLE)
+    if not hPowerNotify:
+        logging.error(f"Failed to register for power notifications. Error: {ctypes.GetLastError()}")
+    else:
+        logging.debug(f"Successfully registered for power notifications. Handle: {hPowerNotify}")
+
+    is_64bit = ctypes.sizeof(ctypes.c_void_p) == 8
+    GWL_WNDPROC = -4
+    
+    # LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM)
+    LRESULT = ctypes.c_longlong if is_64bit else ctypes.c_long
+    WPARAM = ctypes.c_ulonglong if is_64bit else ctypes.c_uint
+    LPARAM = ctypes.c_longlong if is_64bit else ctypes.c_long
+    
+    WNDPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_void_p, ctypes.c_uint, WPARAM, LPARAM)
+    
+    new_proc = WNDPROC(wnd_proc)
+    
+    CallWindowProc = ctypes.windll.user32.CallWindowProcW
+    CallWindowProc.restype = LRESULT
+    CallWindowProc.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, WPARAM, LPARAM]
+    
+    SetWindowLongPtr = ctypes.windll.user32.SetWindowLongPtrW if is_64bit else ctypes.windll.user32.SetWindowLongW
+    SetWindowLongPtr.restype = ctypes.c_void_p
+    SetWindowLongPtr.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    
+    old_wnd_proc = SetWindowLongPtr(hwnd, GWL_WNDPROC, new_proc)
+    logging.debug(f"old_wnd_proc={old_wnd_proc}, new_proc={new_proc}")
+
 def acquire_lock():
     global app_lock_handle, lock_file_handle
     kernel32 = ctypes.windll.kernel32
-    name = f"Global\\{common.APPNAME}_SingleInstance"
+    name = f"Global\\{APPNAME}_SingleInstance"
     
     app_lock_handle = kernel32.CreateSemaphoreW(None, 1, 1, name)
     if not app_lock_handle:
-        name = f"Local\\{common.APPNAME}_SingleInstance"
+        name = f"Local\\{APPNAME}_SingleInstance"
         app_lock_handle = kernel32.CreateSemaphoreW(None, 1, 1, name)
 
     if not app_lock_handle:
@@ -75,13 +156,21 @@ def create_image():
     dc.rectangle((16, 16, 48, 48), fill=(255, 255, 255))
     return image
 
+def check_worker_and_exit():
+    if WorkerThread.isalive():
+        root.after(100, check_worker_and_exit)
+    else:
+        logging.debug("worker thread finished, exiting.")
+        if tray_icon:
+            tray_icon.stop()
+        root.destroy()
+
 def quit_app():
     logging.info("user requested app termination")
     common.shutdown_requested = True
     WorkerThread.shutdown()
-    WorkerThread.waitjoin()
-    if tray_icon: tray_icon.stop()
-    root.destroy()
+    logging.debug("waiting for worker thread to finish...")
+    check_worker_and_exit()
 
 def open_settings():
     global settings_window, disclaimer_window
@@ -140,11 +229,16 @@ def open_licenses():
 
     licenses_window = LicensesWindow(root, extra_licenses=extra_licenses)
 
-def check_scheduler():
+def check_scheduler(manually_triggered=False):
     global scheduler_timer, last_error_check_time
     if scheduler_timer:
         if root: root.after_cancel(scheduler_timer)
         scheduler_timer = None
+
+    if not manually_triggered and common.recently_suspended():
+        if root:
+            scheduler_timer = root.after(15000, check_scheduler)
+        return
 
     now = time.time()
     next_wake_time = now + 3600
@@ -157,7 +251,7 @@ def check_scheduler():
         env = os.environ.copy()
         ready = False
         if cfg.repo:
-            password = keyring.get_password(common.APPNAME, "repository")
+            password = keyring.get_password(APPNAME, "repository")
             if not password:
                 def open_pwd_dialog(args):
                     if root: root.after(0, lambda: PasswordDialog(root))
@@ -181,11 +275,28 @@ def check_scheduler():
                     errors.append(f"{entry.path}: {entry.error}")
                 task_id = f"backup_{entry.id}"
                 if entry.next_run <= now:
-                    class ScheduledBackupTask(BackupTask):
-                        def on_final(self):
-                            super().on_final()
-                            if root: root.after(0, check_scheduler)
-                    WorkerThread.submit_task(ScheduledBackupTask(env, entry, cfg, task_id=task_id))
+                    run_backup = True
+                    if cfg.wait_for_idle and not manually_triggered:
+                        idle_sec = common.get_idle_duration_seconds()
+                        if idle_sec < common.INACTIVITY_TIMEOUT:
+                            overdue = now - entry.next_run
+                            max_wait = entry.frequency / 2
+                            if overdue < max_wait:
+                                run_backup = False
+                                logging.debug(f"Postponing backup for {entry.path} (User active, overdue {overdue:.0f}s)")
+                                
+                                remaining_wait = max_wait - overdue
+                                next_check_delay = min(60, remaining_wait)
+                                if next_check_delay < 5: next_check_delay = 5
+                                
+                                if next_wake_time > now + next_check_delay:
+                                    next_wake_time = now + next_check_delay
+                    if run_backup:
+                        class ScheduledBackupTask(BackupTask):
+                            def on_final(self):
+                                super().on_final()
+                                if root: root.after(0, check_scheduler)
+                        WorkerThread.submit_task(ScheduledBackupTask(env, entry, cfg, task_id=task_id))
                 else:
                     if entry.next_run < next_wake_time:
                         next_wake_time = entry.next_run
@@ -244,25 +355,6 @@ def check_scheduler():
                 elif next_auto_disc < next_wake_time:
                      next_wake_time = next_auto_disc
 
-            # 5. Update Check
-            if cfg.update_check_enabled:
-                uc = UpdateChecker()
-                
-                check_ival = cfg.update_check_frequency if uc.cached_version != "ERROR" else common.MIN_UPDATE_CHECK_IVAL
-                next_check = uc.last_check + check_ival
-                
-                if now > next_check:
-                    WorkerThread.submit_task(UpdateCheckTask(task_id="update_check"))
-                elif next_check < next_wake_time:
-                    next_wake_time = next_check
-                
-                uc.show_toast_if_needed(cfg.update_check_toast_interval)
-
-                if uc.cached_version and uc.cached_version != "ERROR":
-                    next_toast = uc.last_toast + cfg.update_check_toast_interval
-                    if next_toast < next_wake_time:
-                        next_wake_time = next_toast
-
     except Exception as e:
         logging.exception(f"Scheduler error: {e}")
         next_wake_time = time.time() + 60
@@ -299,15 +391,13 @@ def get_tools_info():
 
 if __name__ == "__main__":
     try:
-        common.xxinit()
-
         if not acquire_lock():
-            messagebox.showerror(common.APPNAME, "Another instance is already running, exit(1).")
+            messagebox.showerror(APPNAME, "Another instance is already running, exit(1).")
             sys.exit(1)
 
         DB.init_db()
 
-        installer = ToolsInstaller(common.BIN_DL_DIR, common.APPNAME)
+        installer = ToolsInstaller(common.BIN_DL_DIR, APPNAME)
         tools_config = get_tools_info()
         installer.check_and_install_tools(tools_config)
 
@@ -320,13 +410,23 @@ if __name__ == "__main__":
         root = tk.Tk()
         common.root = root
         root.withdraw()
+        setup_power_broadcast_logging(root)
 
-        if common.IS_DEBUGGER_PRESENT:
+        ui.tools.Tools.start_log_memory_footprint_timerloop(root)
+
+        if ui.tools.IS_DEBUGGER_PRESENT:
             root.after(0, open_settings)
             root.after(3, check_scheduler)
         else:
             root.after(5000, check_scheduler)
         
+        # Start Update Checker
+        cfg = Config()
+        uc = GithubUpdateChecker(APP_GITHUB_ID, APPNAME, APP_VERSION, common.db_conn, root=root, toaster=common.wintoaster, 
+                                 check_frequency=cfg.update_check_frequency, toast_interval=cfg.update_check_toast_interval, min_check_interval=common.MIN_UPDATE_CHECK_IVAL)
+        if cfg.update_check_enabled:
+            uc.start()
+
         menu = pystray.Menu(
             pystray.MenuItem("Run overdue backups now", lambda i, it: root.after(0, WorkerThread.start_worker_thread)),
             pystray.MenuItem("Settings...", lambda i, it: root.after(0, open_settings)),
@@ -334,13 +434,12 @@ if __name__ == "__main__":
             pystray.MenuItem("Licenses", lambda i, it: root.after(0, open_licenses)),
             pystray.MenuItem("Exit", lambda i, it: root.after(0, quit_app))
         )
-        tray_icon = pystray.Icon(common.APPNAME, create_image(), common.APPNAME, menu)
+        tray_icon = pystray.Icon(APPNAME, create_image(), f"{APPNAME} {APP_VERSION}", menu)
         threading.Thread(target=tray_icon.run, daemon=True, name="IconThread").start()
         root.mainloop()
     except Exception as e:
         logging.error(f"Error: {e}")
         raise
     finally:
-        if common.db_conn:
-            common.db_conn.close()
-        logging.info(f"{common.APPNAME} exiting")
+        common.db_conn.close()
+        logging.info(f"{APPNAME} exiting")

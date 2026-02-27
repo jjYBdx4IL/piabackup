@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 import piabackup.common as common
+import ui.tools
 from piabackup.config import Config
 
 
@@ -50,10 +51,10 @@ class Restic:
         rc = p.wait()
         if rc != 0:
             raise Exception(f"cmd failed: rc = {rc}, stderr = {stderr}")
-        if common.IS_DEBUGGER_PRESENT:
+        if ui.tools.IS_DEBUGGER_PRESENT:
             logging.debug(stdout)
         js = json.loads(stdout.splitlines()[0])
-        if common.IS_DEBUGGER_PRESENT:
+        if ui.tools.IS_DEBUGGER_PRESENT:
             logging.debug(json.dumps(js, indent=4))
         logging.info("successful")
         for s in js:
@@ -184,7 +185,7 @@ class Restic:
         logging.info("successful")
         return last_checked_snap
 
-    def run_backup_cmd(self, backup_path:Path, env, docheck=False, no_lock=False, iexclude:str=None):
+    def run_backup_cmd(self, backup_path:Path, env, docheck=False, no_lock=False, iexclude:str|None=None):
         if backup_path is None:
             raise Exception("no backup_path defined")
         if env is None:
@@ -247,7 +248,7 @@ class Restic:
             logging.info("backup successful")
             return summary
 
-    def run_check_cmd(self, env, no_lock=False, segment:int=None):
+    def run_check_cmd(self, env, no_lock=False, segment:int|None=None):
         if segment is None:
             raise Exception("segment param is required for check")
         if segment < 1 or segment > common.FULL_CHECK_SEGMENTS:

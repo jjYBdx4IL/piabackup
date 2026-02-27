@@ -2,7 +2,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from piabackup.common import center_window
+from ui.tools import Tools
 
 
 class AutoDetectDialog(tk.Toplevel):
@@ -63,9 +63,8 @@ class AutoDetectDialog(tk.Toplevel):
         ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.RIGHT, padx=5)
         
         self.transient(parent)
-        self.grab_set()
         
-        center_window(self, 600, 500)
+        Tools.center_window(self, 600, 500)
 
     def select_all(self):
         for _, var in self.vars:
