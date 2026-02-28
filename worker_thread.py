@@ -246,7 +246,7 @@ class BackupTask(WorkerTask):
                         if snaps:
                             latest = snaps[-1]
                             logging.info(f"Path {entry.path} vanished. Tagging snapshot {latest['short_id']} as permanent.")
-                            restic.tag_snapshot(env, latest['id'], ["permanent"], no_lock=cfg.no_lock)
+                            restic.tag_snapshot(env, latest['id'], "permanent", no_lock=cfg.no_lock)
                             entry.n_backups_since_last_perm_tag = 0
                     except Exception as e:
                         logging.error(f"Failed to tag vanished snapshot for {entry.path}: {e}")
