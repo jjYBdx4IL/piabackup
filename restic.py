@@ -433,3 +433,20 @@ class Restic:
             except:
                 pass
         return results
+
+    def diff(self, env, id1, id2, no_lock=False):
+        cmd = ["restic", "diff", id1, id2, "--json"]
+        if no_lock:
+            cmd.append("--no-lock")
+            
+        logging.info(f"running: {' '.join(cmd)}")
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        
+        p = subprocess.Popen(cmd, text=True, encoding='utf-8', stderr=subprocess.PIPE, stdout=subprocess.PIPE, env=env, startupinfo=startupinfo)
+        stdout, stderr = p.communicate()
+        
+        if p.returncode != 0:
+            raise Exception(f"diff failed: {stderr}")
+            
+        return stdout

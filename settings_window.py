@@ -21,6 +21,7 @@ from piabackup.auto_detect_dialog import AutoDetectDialog
 from piabackup.autostart import (is_auto_start, is_running_in_sandbox,
                                  toggle_auto_start)
 from piabackup.backup_dir import BackupDir
+from piabackup.bitrot_window import BitrotWindow
 from piabackup.browse_dialog import BrowseDialog
 from piabackup.config import Config
 from piabackup.default_dirs_scanner import DefaultDirsScanner
@@ -766,6 +767,9 @@ class SettingsWindow(tk.Toplevel):
         if values and values[6]: # Error column
              menu.add_command(label="Unlock Repository...", command=self.unlock_repository_dialog)
         
+        if values and len(values) > 7 and values[7].startswith("bit rot detected"):
+             menu.add_command(label="Look at Bit Rot...", command=self.open_bitrot_window)
+        
         menu.post(event.x_root, event.y_root)
 
     def edit_exclusions(self):
@@ -893,6 +897,26 @@ class SettingsWindow(tk.Toplevel):
             return
             
         BrowseDialog(self, entry, env, self.var_no_lock.get())
+
+    def open_bitrot_window(self):
+        selected = self.tree.selection()
+        if not selected: return
+        path_str = self.tree.item(selected[0])['values'][0]
+        entry = next((d for d in self.dirs if str(d.path) == path_str), None)
+        if not entry: return
+
+        repo = self.var_repo.get().strip()
+        env = os.environ.copy()
+        
+        if repo:
+            password = keyring.get_password(APPNAME, "repository")
+            if not password:
+                # Password handling is duplicated here, but consistent with other methods
+                return
+            env["RESTIC_REPOSITORY"] = repo
+            env["RESTIC_PASSWORD"] = password
+            
+        BitrotWindow(self, entry, env, self.var_no_lock.get())
 
     def edit_dir(self):
         selected = self.tree.selection()
